@@ -1,0 +1,58 @@
+Port settings
+COM
+, sync speed
+baud
+Apply port settings
+Sector settings
+Azimuth
+(degrees)
+(steps)
+increment
+Altitude
+  (degrees)
+Result of rounding
+(units)
+--> Round sector coordinates -->
+Other scaning settings
+Number of repetitions:
+Movement type:
+by altitude, tough
+by azimuth, tough
+by altitude, slow
+by azimuth, slow
+Delay before measurement:
+ms
+Sensor connection interface:
+A0,  avg. per 20 ms
+I2C, avg. per 20 ms
+I2C, single measurement
+Comparison mode
+Saving images on the disc
+Start scan
+Scan status
+Machine status:
+N/A
+repetition
+of
+, measuring
+of the current repetition, remains about
+s
+of the whole task, remains about
+Parking
+Park
+Stop scan
+Current measurement will be lost!
+Stop
+Scanning in progress
+Waiting for a request
+Beginning of repetition
+(calculating)
+Start of scanning
+Returning to the start position
+Parking complete, you can turn off the power
+Azimuth from 
+ st. to 
+ st., 
+altitude from 
+ deg. to 
+ deg.
