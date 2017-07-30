@@ -1,8 +1,3 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
 package javalistener;
 
 import java.awt.BorderLayout;
@@ -46,16 +41,20 @@ import jssc.SerialPortEventListener;
 import jssc.SerialPortException;
 
 /**
- * Структура для хранения трех переменных.
+ * Структура для хранения четырех переменных.
  * @author servb
  */
-class xyz {
-    public int x,y,z;
-    public xyz(final int X, final int Y, final int Z) {
-        x = X;
-        y = Y;
-        z = Z;
+class xyzt {
+    
+    public int x, y, z, t;
+
+    public xyzt(int x, int y, int z, int t) {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.t = t;
     }
+    
 }
 
 /**
@@ -200,8 +199,12 @@ public class JavaListenerCode {
 
     private double tempFrom = -50.0; // Температура черного цвета по умолчанию
     private double tempTo   =  50.0; // Температура белого цвета по умолчанию (должно быть больше tempFrom)
+    
+    private int maxAnalogValue = 1023; // Максимальное значение аналогового датчика
+    
+    private int sensorType = 0; // Тип сенсора
 
-    ArrayList<xyz> alMap = new ArrayList(); // Структура для хранения карты глубины
+    ArrayList<xyzt> alMap = new ArrayList(); // Структура для хранения карты глубины
 //    ArrayList<Long> alTimeBig = new ArrayList(); // Для всей текущей задачи
     ArrayList<Long> alTimeLittle = new ArrayList(); // Для текущего повтора
     private long timeLittleLastUpdate; // Для текущего повтора
@@ -373,8 +376,11 @@ public class JavaListenerCode {
                                        VER_BEGIN, VER_END, VER_AC,
                                        NUM_OF_REP, MOVING_TYPE,
                                        DELAY, SENSOR_TYPE});
+        
+        sensorType = SENSOR_TYPE; // Обновить тип сенсора
 
         timeBegin = new SimpleDateFormat("yyyy.MM.dd-HH.mm.ss").format(Calendar.getInstance().getTime()); // Сохранить время начала
+        
         // Чтобы не ожидать надписей "повтор первый" и "измерение первое",
         // вывести в соответствующие поля единицы (не дожидаясь, пока установка
         // переместится в координаты начала сканирования):
@@ -386,10 +392,9 @@ public class JavaListenerCode {
 
     private void sendRequest(int[] data) throws SerialPortException { // Послать запрос на сканирование
         String request = String.format( // Строка для отправки на микроконтроллер
-                "%d %d  %d %d  %d %d  %d %d  %d %d  %d %d  %.1f %.1f\n", 
+                "%d %d  %d %d  %d %d  %d %d  %d %d  %d %d\n", 
                 data[0],data[1],data[2],data[3],data[4],data[5],
-                data[6],data[7],data[8],data[9],data[10],data[11],
-                tempFrom, tempTo
+                data[6],data[7],data[8],data[9],data[10],data[11]
         );
         request = request.replaceAll(",", "."); // Разделитель дробной части может быть запятой (если в Windows выставлен
                                                 // русский язык), поэтому заменить все запятые в строке на точки
@@ -450,7 +455,7 @@ public class JavaListenerCode {
         LAST_SYMBOL = Integer.parseInt(currentLine); // Записать длину имени параметра
 
         int i; // Индекс последней буквы в имени параметра
-        while((currentLine=br.readLine())!=null) { // Строка вида "*********=........"
+        while((currentLine = br.readLine()) != null) { // Строка вида "*********=........"
             if(currentLine.length()>LAST_SYMBOL && currentLine.charAt(LAST_SYMBOL-1) == '=') { // Длина строки достаточна для содержания параметра? Есть ли знак равенства на нужном месте?
                 i = (currentLine.indexOf(' ') < 0 || currentLine.indexOf(' ')>LAST_SYMBOL-1) ? LAST_SYMBOL-1 : currentLine.indexOf(' '); // Позиция последнего символа имени параметра
                 // Нахождение имени параметра:
@@ -488,6 +493,8 @@ public class JavaListenerCode {
                     tempFrom = Double.parseDouble(currentLine.substring(LAST_SYMBOL,currentLine.length()));
                 else if(currentLine.substring(0, i).equals("tempTo"))
                     tempTo = Double.parseDouble(currentLine.substring(LAST_SYMBOL,currentLine.length()));
+                else if(currentLine.substring(0, i).equals("maxAnalog"))
+                    maxAnalogValue = Integer.parseInt(currentLine.substring(LAST_SYMBOL,currentLine.length()));
             }
         }
     }
@@ -512,7 +519,8 @@ public class JavaListenerCode {
                         "sensorType=" + uiComboSensorType.getSelectedIndex()    + NEW_LINE +
                         "tempFrom  =" + tempFrom                                + NEW_LINE +
                         "tempTo    =" + tempTo                                  + NEW_LINE +
-                        "stepDivDeg=" + stepDivDeg;
+                        "stepDivDeg=" + stepDivDeg                              + NEW_LINE +
+                        "maxAnalog =" + maxAnalogValue                          + NEW_LINE;
         File f = new File(new File("").getAbsolutePath() + File.separator + "options.txt"); // Файл настроек
         if(f.exists()) f.delete(); // Если файл существует - удалить
         f.createNewFile(); // Создать файл
@@ -521,18 +529,32 @@ public class JavaListenerCode {
         bufferedWriter.flush(); // Записать файл
 
     }
+    
+    int map(int x, int in_min, int in_max, int out_min, int out_max) {
+        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+    }
 
     void evtMeasure(String s) { // Обрабатывает измерение
+        // Строка вида
+        // "===m=== Measure #(curMeas) of (numOfMeas): (hor) steps, (ver) degs= (measA) (measI), time: (millis);"
+        //                   0            1            2            3           4       5              6
         curMeas++; // Увеличить кол-во измерений
         uiLabelCurMeas.setText(curMeas + ""); // Вывести номер текущего измерения в форму
         vStringToArrayOfInt(s); // Разбить строку измерений на массив int
-        if (ardStringToArrayOfIntSize >= 5) { // Если верная строка
+        if (ardStringToArrayOfIntSize >= 7) { // Если верная строка
             int horCord = ardStringToArrayOfInt[2]; // Гор. координата
             int verCord = ardStringToArrayOfInt[3]; // Вер. кооддината
-            int value = ardStringToArrayOfInt[4]; // Значение датчика
-            logData += horCord + " " + verCord + " " + value + System.getProperty("line.separator"); // Запись в лог
-            alMap.add(new xyz(horCord,verCord,value)); // Добавление точки измерения в хранилище всех точек измерения
-            updatePic(horCord,verCord,value); // Обновить картинку на экране: добавить точку
+            int valueAnalog = ardStringToArrayOfInt[4]; // Значение аналога
+            int valueIr = ardStringToArrayOfInt[5]; // Значение ИК
+            logData += horCord + " " + verCord + " " + valueAnalog + " " + valueIr + System.getProperty("line.separator"); // Запись в лог
+            alMap.add(new xyzt(horCord,verCord,valueAnalog,valueIr)); // Добавление точки измерения в хранилище всех точек измерения
+            if (sensorType == 0) { // Если был выбран аналог
+                int pixel = map(valueAnalog, 0, maxAnalogValue, 0, (2 << 16) - 1); // Получить цвет пикселя
+                updatePic(horCord,verCord,pixel); // Обновить картинку на экране: добавить точку
+            } else { // Иначе был выбран ИК
+                int pixel = map(valueIr, (int) Math.round(tempFrom * 100), (int) Math.round(tempTo * 100), 0, (2 << 16) - 1); // Получить цвет пикселя
+                updatePic(horCord,verCord,pixel); // Обновить картинку на экране: добавить точку
+            }
 
             uiLabelStatus.setText(alCurLocale.get(45)); // Обновить статус на "Сканирование в процессе"
 
@@ -878,7 +900,7 @@ public class JavaListenerCode {
 
         final int cordX = Integer.parseInt(mapHor.get(horCord).toString());
         final int cordY = Integer.parseInt(mapVer.get(verCord).toString());
-        bi.setRGB(cordX, cordY, value*64 + 32); // 0 примерно равен 0, 2^10 примерно равно 2^16
+        bi.setRGB(cordX, cordY, value);
 
         /* Вывод картинки на экран: */
         curIW.setImage(bi);

@@ -16,3 +16,4 @@ sensorType=2
 tempFrom  =-30.0
 tempTo    =10.0
 stepDivDeg=1.1111111111111112
+maxAnalog =1023
