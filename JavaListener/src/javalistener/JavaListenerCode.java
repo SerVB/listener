@@ -530,8 +530,15 @@ public class JavaListenerCode {
 
     }
     
-    int map(int x, int in_min, int in_max, int out_min, int out_max) {
-        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+    int transform(int x, int in_min, int in_max, int out_min, int out_max) {
+        int mapped = (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+        if (mapped < out_min) {
+            return out_min;
+        } else if (out_max < mapped) {
+            return out_max;
+        } else {
+            return mapped;
+        }
     }
 
     void evtMeasure(String s) { // Обрабатывает измерение
@@ -549,10 +556,10 @@ public class JavaListenerCode {
             logData += horCord + " " + verCord + " " + valueAnalog + " " + valueIr + System.getProperty("line.separator"); // Запись в лог
             alMap.add(new xyzt(horCord,verCord,valueAnalog,valueIr)); // Добавление точки измерения в хранилище всех точек измерения
             if (sensorType == 0) { // Если был выбран аналог
-                int pixel = map(valueAnalog, 0, maxAnalogValue, 0, (2 << 16) - 1); // Получить цвет пикселя
+                int pixel = transform(valueAnalog, 0, maxAnalogValue, 0, (2 << 16) - 1); // Получить цвет пикселя
                 updatePic(horCord,verCord,pixel); // Обновить картинку на экране: добавить точку
             } else { // Иначе был выбран ИК
-                int pixel = map(valueIr, (int) Math.round(tempFrom * 100), (int) Math.round(tempTo * 100), 0, (2 << 16) - 1); // Получить цвет пикселя
+                int pixel = transform(valueIr, (int) Math.round(tempFrom * 100), (int) Math.round(tempTo * 100), 0, (2 << 16) - 1); // Получить цвет пикселя
                 updatePic(horCord,verCord,pixel); // Обновить картинку на экране: добавить точку
             }
 
