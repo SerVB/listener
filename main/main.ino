@@ -1,202 +1,177 @@
 #include "myStepper.h"
 #include "myServo.h"
 
+/* Азимут: */
 const int cHOR_STEP_DELAY           = 10;            // Время поворота шаговика на один шаг/полушаг в мс
 const int cHOR_MAX_STEPS_ONE_DIR    = 600;           // Максимальное кол-во шагов/полушагов шаговика в одну сторону (защита от перекручивания проводов)
 const int cHOR_PINS[]               = {3, 5, 6, 11}; // Пины подключения шаговика
 const int cHOR_STEPS_PER_REVOLUTION = 400;           // Количество шагов/полушагов шаговика на один оборот
 
-myStepper horStepper(cHOR_STEPS_PER_REVOLUTION,
+myStepper horStepper(cHOR_STEPS_PER_REVOLUTION,      // Объект шаговика
                      cHOR_MAX_STEPS_ONE_DIR,
                      cHOR_STEP_DELAY,
                      cHOR_PINS[0], cHOR_PINS[1], cHOR_PINS[2], cHOR_PINS[3]);
+/* Конец азимута */
 
+/* Высота: */
+const int cVER_PIN   = 13;   // Пин подключения серво
+const int cVER_DELAY = 15;   // Время поворота серво на один градус в мс
 
-
-const int cVER_PIN   = 13; // Пин подключения серво
-const int cVER_DELAY = 15; // Время поворота серво на один градус в мс
-
-myServo verServo(cVER_DELAY,
+myServo verServo(cVER_DELAY, // Объект серво
                  cVER_PIN);
+/* Конец высоты */
 
+const int cSENSOR_PIN = A0; // Пин аналогового датчика
 
+boolean printed = false; // Напечатан ли призыв к отправке данных компьютером
 
-const int cSENSOR_PIN = A0; // Пин датчика
-const int cNUM_OF_MES = 100;
-
-//const long cMAX_MES_PER_REP = long(5) * 1000;
-
-boolean printed  = false; // Напечатан ли призыв к вводу?
-
+/* Полученная с ПК задача: */
 int horReadBegin;
 int horReadEnd;
 int horReadAc;
-bool horUnitDeg;
-bool horAcUnitDeg;
+
+bool horUnitDeg;    // В градусах ли посланы координаты по азимуту
+bool horAcUnitDeg;  // В градусах ли послан шаг по азимуту
+
 int verDegBegin;
 int verDegEnd;
 int verDegAc;
-int numOfRep;
-int movingType;
 
-int waitBeforeMeas, sensorType;
+int numOfRep;       // Количество повторов
+int movingType;     // Тип обхода сектора
 
-int (*meas)(void);
+int waitBeforeMeas; // Задержка перед каждым измерением
+int sensorType;     // Параметры сенсора
+/* Конец задачи */
 
+/* Сконвертированная задача: */
 int horStepBegin;
 int horStepEnd;
 int horStepAc;
+/* Конец сконвертированной задачи */
 
-float tempFrom = -50.0; // Минимальная температура, все что ниже будет приравнено к минимуму
-float tempTo   =  50.0; // Мксимальная температура, аналогично выше
+String (*meas)(void); // Указатель на нужный метод сканирования
 
 /* Для ИК датчика: */
-#include <Wire.h> // I2C library, required for MLX90614
+#include <Wire.h>             // I2C library, required for MLX90614
 #include <SparkFunMLX90614.h> // SparkFunMLX90614 Arduino library
-IRTherm therm; // Create an IRTherm object to interact with throughout
+IRTherm therm;                // Create an IRTherm object to interact with throughout
+
+float tempFrom = -50.0; // Минимальная температура, все что ниже будет приравнено к минимуму
+float tempTo   =  50.0; // Максимальная температура, аналогично выше
+
+const double cDOUBLE_MULTYPLIER = 100.0; // Множитель
 /* Для ИК датчика */
 
+/**
+ * Паркует установку: устанавливает серво в позицию deg и блокирует установку.
+ */
 inline void parking(int deg) {
-  Serial.println("=park=" + String(deg) + ";");
-  verServo.toDeg(deg);
-  Serial.println("=park= Park successful!;");
-  while(true) {}
+  Serial.println("=park= To " + String(deg) + "degs;"); // "Начало парковки"
+  verServo.toDeg(deg);                                  // Переместить серво
+  Serial.println("=park= Park successful!;");           // "Парковка завершена"
+  
+  while(true) {}                                        // Заблокировать установку
 }
 
-inline int meas0() { // Сделать и вывести измерение на аналоге
-  delay(waitBeforeMeas);
-  unsigned long long sum = 0;
-  unsigned long startms = millis();
-  unsigned long long numOfMes = 0;
-  while (millis() - startms < 20) { // Сбор данных в течение 20 мс
-    sum += analogRead(cSENSOR_PIN);
-    numOfMes++;
+/**
+ * Возвращает измерение с аналога: усредняет значения аналога за 20 мс.
+ */
+inline int measAnalog20() {
+  unsigned long long sum = 0;                 // Сумма значений
+  unsigned long long numOfMes = 0;            // Количество измерений
+  unsigned long startms = millis();           // Время начала измерений
+  
+  while (millis() - startms < 20) {           // Сбор данных в течение 20 мс
+    sum += analogRead(cSENSOR_PIN);           // Учесть значение с датчика
+    numOfMes++;                               // Увеличить кол-во выполненных измерений
   }
-  float ans = (0.0 + sum) / (0.0 + numOfMes);
-  return round(ans);
+  
+  float ans = (0.0 + sum) / (0.0 + numOfMes); // Рассчитать результат
+  return round(ans);                          // Вернуть округленный результат
 }
 
-inline int meas1() { // Сделать и вывести измерение на ИК, усреднить
-  delay(waitBeforeMeas);
-  double sum = 0.0;
-  unsigned long startms = millis();
-  int numOfMes = 0;
+/**
+ * Возращает строку измерения с аналога: усредняет значения аналога за 20 мс.
+ * Измерение с ИК-датчика принимается равным за -4200.
+ */
+inline String meas0() {
+  delay(waitBeforeMeas);                 // Сделать задержку перед измерениями
+  
+  return String(measAnalog20()) + " -4200"; // Вернуть строку измерения
+}
+
+/**
+ * Возвращает измерение с ИК-датчика: усредняет значения датчика за 20 мс.
+ */
+inline double measIr20() {
+  double sum = 0.0;                 // Сумма значений
+  unsigned long long numOfMes = 0;  // Количество измерений
+  unsigned long startms = millis(); // Время начала измерений
+  
   while (millis() - startms < 20) { // Сбор данных в течение 20 мс
-    if (therm.read()) {
-      sum += therm.object();
-      numOfMes++;
+    if (therm.read()) {             // Если данные считываются
+      sum += therm.object();        // Учесть данные с датчика
+      numOfMes++;                   // Увеличить кол-во выполненных измерений
     }
   }
-  Serial.println("=debug= sum = " + String(sum) + ", num = " + String(numOfMes) + ";");
-  sum /= numOfMes;
-
-  sum = map(sum, tempFrom, tempTo, 0.0, 1023.0);
-  Serial.println("=debug= sum mapped = " + String(sum) +";");
-//  sum -= tempFrom;
-//  sum *= 1023.0/(tempTo - tempFrom);
-  if (sum < 0.0)
-    sum = 0.0;
-  else if (sum > 1023.0)
-    sum = 1023.0;
-  return round(sum);
+  
+  return sum / numOfMes;            // Вернуть результат
 }
 
-inline int meas2() { // Сделать и вывести измерение на ИК, сразу
-  delay(waitBeforeMeas);
-  // Сделать измерения пять раз - попытка подождать больше
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-  while (!therm.read())
-    delay(1);
-  float res = therm.object();
-  Serial.println("=debug= res = " + String(res) + ";");
-  res = map(res, tempFrom, tempTo, 0.0, 1023.0);
-//  res -= tempFrom;
-//  res *= 1023.0/(tempTo - tempFrom);
-  if (res < 0.0)
-    res = 0.0;
-  else if (res > 1023.0)
-    res = 1023.0;
-
-  return round(res);
+/**
+ * Домножает значение ИК-датчика и возвращает округленный результат.
+ * Следует использовать для конвертации значения ИК-датчика перед отправкой компьютеру.
+ */
+inline int irToInt(double irValue) {
+  irValue *= cDOUBLE_MULTYPLIER; // Домножить результат
+  return round(irValue);         // Вернуть округленный результат
 }
 
-//inline int meas1() { // Сделать и вывести измерение на ИК, усреднить
-//  delay(waitBeforeMeas);
-//  double sum = 0.0;
-//  unsigned long startms = millis();
-//  int numOfMes = 0;
-//  while (millis() - startms < 20) { // Сбор данных в течение 20 мс
-//    if (therm.read()) {
-//      sum += therm.object();
-//      numOfMes++;
-//    }
-//  }
-//  sum /= numOfMes;
-//
-//  sum += 50.0;
-//  sum *= 10.0;
-//  if (sum < 0.0)
-//    sum = 0.0;
-//  else if (sum > 1023.0)
-//    sum = 1023.0;
-//  return round(sum);
-//}
-//
-//inline int meas2() { // Сделать и вывести измерение на ИК, сразу
-//  delay(waitBeforeMeas);
-//  // Сделать измерения пять раз - попытка подождать больше
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//  while (!therm.read())
-//  {
-//    delay(1);
-//  }
-//
-//  float res = therm.object();
-//  res += 50.0;
-//  res *= 10.0;
-//  if (res < 0.0)
-//    res = 0.0;
-//  else if (res > 1023.0)
-//    res = 1023.0;
-//
-//  return round(res);
-//}
+/**
+ * Возвращает строку измерения с ИК-датчика: усредняет значения датчика за 20 мс.
+ * Измерение с аналога принимается равным за -42.
+ */
+inline String meas1() {
+  delay(waitBeforeMeas);                       // Сделать задержку перед измерениями
+  
+  return "-42 " + String(irToInt(measIr20())); // Вернуть строку измерения
+}
 
-inline void makeVerMovingSlow() { // Сканирование с преобладающим движением по вертикали, всегда в одну сторону
+#define cNUM_OF_ATTEMPTS 5 // Количество попыток получить одно измерение
+/**
+ * Возвращает измерение с ИК-датчика: делается одно измерение.
+ * Измерение с аналога принимается равным за -42.
+ */
+inline double measIrSingle() {
+  double res = 0.0;                                     // Результат измерения
+  int counter = 0;                                      // Счетчик попыток
+  
+  while (!therm.read() && counter < cNUM_OF_ATTEMPTS) { // Сделать несколько попыток считать измерение
+    delay(1);                                           // Подождать между попытками
+    counter++;                                          // Увеличить счетчик
+  }
+  
+  if (counter != cNUM_OF_ATTEMPTS)                      // Если измерение считано
+    res = therm.object();                               // Получить измерение
+
+  return res;                                           // Вернуть результат
+}
+
+/**
+ * Возвращает строку измерения с ИК-датчика: делается одно измерение.
+ * Измерение с аналога принимается равным за -42.
+ */
+inline String meas2() {
+  delay(waitBeforeMeas);                           // Сделать задержку перед измерениями
+  
+  return "-42 " + String(irToInt(measIrSingle())); // Вернуть строку измерения
+}
+
+/**
+ * Сканирование с преобладающим движением по вертикали, всегда в одну сторону.
+ */
+inline void makeVerMovingSlow() {
   int horSteps = abs(horStepBegin - horStepEnd) / horStepAc + 1;
   int verSteps = abs(verDegBegin - verDegEnd) / verDegAc + 1;
   long numOfMeas = long(horSteps) * verSteps;
@@ -209,8 +184,7 @@ inline void makeVerMovingSlow() { // Сканирование с преобла�
     while ((verDegBegin <= ver && ver <= verDegEnd) || (verDegEnd <= ver && ver <= verDegBegin)) {
       horStepper.toStep(hor);
       verServo.toDeg(ver);
-      int measToPrint = meas();
-      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + measToPrint + ", time: " + millis() + ";");
+      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + meas() + ", time: " + millis() + ";");
       ver += verDelta;
       curMeas++;
     }
@@ -221,7 +195,10 @@ inline void makeVerMovingSlow() { // Сканирование с преобла�
     Serial.println("Error in makeVerMoving!;");
 }
 
-inline void makeVerMoving() { // Сканирование с преобладающим движением по вертикали
+/**
+ * Сканирование с преобладающим движением по вертикали.
+ */
+inline void makeVerMoving() {
   int horSteps = abs(horStepBegin - horStepEnd) / horStepAc + 1;
   int verSteps = abs(verDegBegin - verDegEnd) / verDegAc + 1;
   long numOfMeas = long(horSteps) * verSteps;
@@ -234,8 +211,7 @@ inline void makeVerMoving() { // Сканирование с преоблада�
     while ((verDegBegin <= ver && ver <= verDegEnd) || (verDegEnd <= ver && ver <= verDegBegin)) {
       horStepper.toStep(hor);
       verServo.toDeg(ver);
-      int measToPrint = meas();
-      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + measToPrint + ", time: " + millis() + ";");
+      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + meas() + ", time: " + millis() + ";");
       ver += verDelta;
       curMeas++;
     }
@@ -247,7 +223,10 @@ inline void makeVerMoving() { // Сканирование с преоблада�
     Serial.println("Error in makeVerMoving!;");
 }
 
-inline void makeHorMovingSlow() { // Сканирование с преобладающим движением по горизонтали
+/**
+ * Сканирование с преобладающим движением по горизонтали, всегда в одну сторону.
+ */
+inline void makeHorMovingSlow() {
   int horSteps = abs(horStepBegin - horStepEnd) / horStepAc + 1;
   int verSteps = abs(verDegBegin - verDegEnd) / verDegAc + 1;
   long numOfMeas = long(horSteps) * verSteps;
@@ -260,8 +239,7 @@ inline void makeHorMovingSlow() { // Сканирование с преобла�
     while ((horStepBegin <= hor && hor <= horStepEnd) || (horStepEnd <= hor && hor <= horStepBegin)) {
       horStepper.toStep(hor);
       verServo.toDeg(ver);
-      int measToPrint = meas();
-      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + measToPrint + ", time: " + millis() + ";");
+      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + meas() + ", time: " + millis() + ";");
       hor += horDelta;
       curMeas++;
     }
@@ -272,7 +250,10 @@ inline void makeHorMovingSlow() { // Сканирование с преобла�
     Serial.println("Error in makeHorMoving!;");
 }
 
-inline void makeHorMoving() { // Сканирование с преобладающим движением по горизонтали
+/**
+ * Сканирование с преобладающим движением по горизонтали.
+ */
+inline void makeHorMoving() {
   int horSteps = abs(horStepBegin - horStepEnd) / horStepAc + 1;
   int verSteps = abs(verDegBegin - verDegEnd) / verDegAc + 1;
   long numOfMeas = long(horSteps) * verSteps;
@@ -285,8 +266,7 @@ inline void makeHorMoving() { // Сканирование с преоблада�
     while ((horStepBegin <= hor && hor <= horStepEnd) || (horStepEnd <= hor && hor <= horStepBegin)) {
       horStepper.toStep(hor);
       verServo.toDeg(ver);
-      int measToPrint = meas();
-      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + measToPrint + ", time: " + millis() + ";");
+      Serial.println("===m=== Measure #" + String(curMeas) + " of " + String(numOfMeas) + " (" + hor + " steps," + ver + " degs)=" + meas() + ", time: " + millis() + ";");
       hor += horDelta;
       curMeas++;
     }
@@ -298,7 +278,10 @@ inline void makeHorMoving() { // Сканирование с преоблада�
     Serial.println("Error in makeHorMoving!;");
 }
 
-inline void scan() { // Сканирование
+/**
+ * Сканирование.
+ */
+inline void scan() {
   if (!printed) { // Приветствие не напечатано?
     Serial.println("===r=== Ready! Request waiting;");
     printed = true; // Пометка напечатанным
@@ -321,9 +304,6 @@ inline void scan() { // Сканирование
     waitBeforeMeas = Serial.parseInt();
     sensorType = Serial.parseInt();
 
-    tempFrom = Serial.parseFloat();
-    tempTo   = Serial.parseFloat();
-
     if (Serial.read() == '\n') {
       if(movingType == 4) {
         parking(verDegBegin);
@@ -341,7 +321,8 @@ inline void scan() { // Сканирование
           break;
       }
 
-      if (horUnitDeg) { /* Перевод из градусов в шаги для горизонтального серво: */
+	  /* Перевод из градусов в шаги для горизонтального серво: */
+      if (horUnitDeg) {
         horStepBegin = int(long(horReadBegin) * long(cHOR_STEPS_PER_REVOLUTION) / 360);
         horStepEnd   = int(long(horReadEnd)   * long(cHOR_STEPS_PER_REVOLUTION) / 360);
       }
@@ -395,7 +376,6 @@ inline void scan() { // Сканирование
       for (int i = 0; i < numOfRep; i++) {
         Serial.println("===p=== Repeatition " + String(i + 1) + " of " + String(numOfRep) + ";");
         makeMoving();
-
         Serial.println("===e=== End of repeatition;");
       }
       horStepper.toStep(0);
